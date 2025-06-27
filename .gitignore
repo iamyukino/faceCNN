@@ -1,7 +1,7 @@
 # 过程文件
 *.pyc
-*.bin
 *.exe
 
 # 数据文件夹
+.vscode
 data
