@@ -1,3 +1,4 @@
+
 import os
 import torch
 from model import LCNN
@@ -131,4 +132,148 @@ with open('./params/bias_fc.bin', 'wb') as f:
     for b in fc_biases:
         b.tofile(f)
 
-print("Parameters saved with fused BN layers.")
+
+class TestModel(torch.nn.Module):
+    def __init__(self, conv_shapes, fc_shapes):
+        super(TestModel, self).__init__()
+
+        # 定义卷积层
+        self.conv1 = torch.nn.Conv2d(
+            3, 32, kernel_size=3, padding=1)  # 输入3通道，输出32通道
+        self.conv2 = torch.nn.Conv2d(
+            32, 32, kernel_size=3, padding=1)  # 输入32通道，输出32通道
+        self.conv3 = torch.nn.Conv2d(
+            32, 64, kernel_size=3, padding=1)  # 输入32通道，输出64通道
+        self.conv4 = torch.nn.Conv2d(
+            64, 128, kernel_size=3, padding=1)  # 输入64通道，输出128通道
+
+        # 全连接层
+        # 输入128 * 5 * 5=3200，输出256
+        self.fc1 = torch.nn.Linear(128 * 5 * 5, 256)
+        self.fc2 = torch.nn.Linear(256, 128)  # 输入256，输出128
+        self.fc3 = torch.nn.Linear(128, 7)  # 输入128，输出7
+
+        # 其他层
+        self.pool = torch.nn.MaxPool2d(2, stride=2)
+        self.relu = torch.nn.ReLU()
+
+    def forward(self, x):
+        # 第一卷积块
+        x = self.relu(self.conv1(x))
+        x = self.relu(self.conv2(x))
+        x = self.pool(x)
+
+        # 第二卷积块
+        x = self.relu(self.conv3(x))
+        x = self.pool(x)
+
+        # 第三卷积块
+        x = self.relu(self.conv4(x))
+        x = self.pool(x)
+
+        # 全连接块
+        x = x.view(x.size(0), -1)  # 展平
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.fc3(x)
+
+        return x
+
+
+# 定义网络结构参数
+conv_shapes = [
+    (32, 3, 3, 3),   # conv1: 输出通道32, 输入通道3, 卷积核3x3
+    (32, 32, 3, 3),  # conv2: 输出通道32, 输入通道32, 卷积核3x3
+    (64, 32, 3, 3),  # conv3: 输出通道64, 输入通道32, 卷积核3x3
+    (128, 64, 3, 3)  # conv4: 输出通道128, 输入通道64, 卷积核3x3
+]
+
+fc_shapes = [
+    (256, 128 * 5 * 5),   # fc1: 输出256, 输入128 * 5 * 5
+    (128, 256),           # fc2: 输出128, 输入256
+    (7, 128)              # fc3: 输出7, 输入128
+]
+
+# 创建测试模型
+test_model = TestModel(conv_shapes, fc_shapes)
+test_model.eval()
+
+# 加载卷积权重
+with open('./params/weight_conv.bin', 'rb') as f:
+    weights_data = np.frombuffer(f.read(), dtype=np.float32)
+
+# 按层加载参数
+conv_layers = [test_model.conv1, test_model.conv2,
+               test_model.conv3, test_model.conv4]
+start_idx = 0
+for i, layer in enumerate(conv_layers):
+    shape = conv_shapes[i]
+    size = np.prod(shape)
+    w = weights_data[start_idx:start_idx+size].reshape(shape)
+    layer.weight.data = torch.tensor(w).float()
+    start_idx += size
+
+# 加载卷积偏置
+with open('./params/bias_conv.bin', 'rb') as f:
+    biases_data = np.frombuffer(f.read(), dtype=np.float32)
+
+start_idx = 0
+for i, layer in enumerate(conv_layers):
+    shape = conv_shapes[i]
+    size = shape[0]
+    b = biases_data[start_idx:start_idx+size]
+    layer.bias.data = torch.tensor(b).float()
+    start_idx += size
+
+# 加载全连接权重
+with open('./params/weight_fc.bin', 'rb') as f:
+    weights_data = np.frombuffer(f.read(), dtype=np.float32)
+
+fc_layers = [test_model.fc1, test_model.fc2, test_model.fc3]
+start_idx = 0
+for i, layer in enumerate(fc_layers):
+    shape = fc_shapes[i]
+    size = np.prod(shape)
+    w = weights_data[start_idx:start_idx+size].reshape(shape)
+    layer.weight.data = torch.tensor(w).float()
+    start_idx += size
+
+# 加载全连接偏置
+with open('./params/bias_fc.bin', 'rb') as f:
+    biases_data = np.frombuffer(f.read(), dtype=np.float32)
+
+start_idx = 0
+for i, layer in enumerate(fc_layers):
+    shape = fc_shapes[i]
+    size = shape[0]
+    b = biases_data[start_idx:start_idx+size]
+    layer.bias.data = torch.tensor(b).float()
+    start_idx += size
+
+# 图像预处理
+normalize = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    normalize
+])
+img = Image.open('./data/image.bmp')
+img_tensor = transform(img).unsqueeze(0)
+
+# 原始模型输出
+with torch.no_grad():
+    logits_original = net(img_tensor)
+
+# 测试模型输出
+with torch.no_grad():
+    logits_test = test_model(img_tensor)
+
+error = np.mean(abs(logits_original.detach().numpy() -
+                logits_test.detach().numpy()))
+print('Logits: {}'.format(logits_test.detach().numpy()))
+print('Error Logits: {:.10f}'.format(error))
+
+# 输出预测结果
+_, predict = torch.max(logits_test, 1)
+label2emotion = ['surprise', 'fear', 'disgust',
+                 'happiness', 'sadness', 'anger', 'neutral']
+print('Prediction: {}'.format(label2emotion[predict.item()]))

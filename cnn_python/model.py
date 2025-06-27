@@ -5,10 +5,9 @@ class LCNN(nn.Module):
     def __init__(self, opts):
         super(LCNN, self).__init__()
 
-        # 优化卷积部分
         self.conv_block = nn.Sequential(
-            # 第1层卷积
-            nn.Conv2d(3, 32, 3, padding=1),  # 减少通道数
+            # 卷积1-激活-卷积2-激活-池化
+            nn.Conv2d(3, 32, 3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.Conv2d(32, 32, 3, padding=1),
@@ -16,22 +15,21 @@ class LCNN(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(2, 2),  # 40x40 -> 20x20
 
-            # 第2层卷积
-            nn.Conv2d(32, 64, 3, padding=1),  # 减少通道数
+            # 卷积3-激活-池化
+            nn.Conv2d(32, 64, 3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),  # 20x20 -> 10x10
 
-            # 第3层卷积
-            nn.Conv2d(64, 128, 3, padding=1),  # 减少通道数
+            # 卷积4-激活-池化
+            nn.Conv2d(64, 128, 3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),  # 10x10 -> 5x5
         )
 
-        # 优化全连接部分
         self.fc = nn.Sequential(
-            nn.Linear(128 * 5 * 5, 256),  # 大幅减少参数
+            nn.Linear(128 * 5 * 5, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.Dropout(opts.dropout),

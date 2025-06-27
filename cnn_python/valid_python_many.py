@@ -1,3 +1,4 @@
+
 import os
 from tqdm import tqdm
 import numpy as np
@@ -7,15 +8,15 @@ from valid_python_single import read_bin_as_floats, func_conv2d, func_max_poolin
 
 # 定义网络结构参数
 conv_shapes = [
-    (32, 3, 3, 3),   # conv1
+    (32, 3, 3, 3),    # conv1
     (32, 32, 3, 3),   # conv2
     (64, 32, 3, 3),   # conv3
     (128, 64, 3, 3)   # conv4
 ]
 fc_shapes = [
-    (256, 128 * 5 * 5),   # fc1
-    (128, 256),       # fc2
-    (7, 128)          # fc3
+    (256, 128 * 5 * 5),  # fc1
+    (128, 256),          # fc2
+    (7, 128)             # fc3
 ]
 
 # 加载融合后的参数
