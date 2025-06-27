@@ -6,12 +6,11 @@ import torchvision.transforms as transforms
 
 
 class RafdbDataset(Dataset):
-    def __init__(self, data_dir, label_path, mode='train'):
+    def __init__(self, data_dir, label_path, mode='train', transform=None):
         self.data_dir = data_dir
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-        ])
+
+        # 保存传入的transform对象
+        self.transform = transform if transform else self.get_default_transform()
 
         # 读取标签文件
         self.labels = {}
@@ -30,6 +29,13 @@ class RafdbDataset(Dataset):
         # 情绪标签映射
         self.emotion_map = ['surprise', 'fear', 'disgust',
                             'happiness', 'sadness', 'anger', 'neutral']
+
+    def get_default_transform(self):
+        """默认转换（如果没有外部传入transform）"""
+        return transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+        ])
 
     def __len__(self):
         return len(self.image_list)
