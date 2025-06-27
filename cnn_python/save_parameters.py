@@ -1,7 +1,7 @@
 
 import os
 import torch
-from train.model import LCNN
+from model import LCNN
 import argparse
 from PIL import Image
 import numpy as np
@@ -12,17 +12,17 @@ parser.add_argument('--num_classes', type=int, default=7)
 parser.add_argument('--resume_net', type=str, default='./results/best.ckpt')
 opts = parser.parse_args()
 
-net = LCNN(opts)   
+net = LCNN(opts)
 ckpt = torch.load(opts.resume_net, map_location=lambda storage, loc: storage)
 net.load_state_dict(ckpt['net_state_dict'])
 
-normalize = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])    
+normalize = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 transform = transforms.Compose([
     transforms.ToTensor(),
-    normalize           
+    normalize
 ])
 img = Image.open('./data/image.bmp')
-img = transform(img).unsqueeze(0)   
+img = transform(img).unsqueeze(0)
 logits = net(img)
 
 if os.path.isdir('./params') is False:
@@ -32,7 +32,7 @@ conv_out = net.conv(img)
 pool_out = net.pool(conv_out)
 relu_out = net.relu(pool_out)
 relu_out = relu_out.view(1, -1)
-fc_out   = net.fc(relu_out)
+fc_out = net.fc(relu_out)
 
 # here
 weight_conv = net.conv.weight.detach().numpy().astype(np.float32)
@@ -50,9 +50,6 @@ print('Logits: {}'.format(logits.data))
 print('Error Logits: {:.10f}'.format(error))
 
 _, predict = torch.max(logits, 1)
-label2emotion = ['surprise', 'fear', 'disgust', 'happiness', 'sadness', 'anger', 'neutral']
+label2emotion = ['surprise', 'fear', 'disgust',
+                 'happiness', 'sadness', 'anger', 'neutral']
 print('Prediction: {}'.format(label2emotion[predict.item()]))
-
-
-
-
