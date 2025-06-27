@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <direct.h>
+#include <float.h>
 
 #pragma pack(push, 1) 
 typedef struct {
@@ -145,7 +146,7 @@ void savetxt(float *p_data, int width, int height, int channel, const char *file
     }    
 
     fclose(outFile);
-    printf("saved to output folder ...\n");
+    printf("saved to output folder %s ...\n", filename);
     return;
 }
 
@@ -188,8 +189,8 @@ void readFloatBinary(const char *filename, float **data) {
 
 void initConv(ConvolutionLayer *conv, int in_channel, int out_channel, int kernel_size, int stride, int padding)   
 {        
-    readFloatBinary("./params/weight_conv.bin", &(conv->weight));
-    readFloatBinary("./params/bias_conv.bin", &(conv->bias));
+    readFloatBinary("../cnn_python/params/weight_conv.bin", &(conv->weight));
+    readFloatBinary("../cnn_python/params/bias_conv.bin", &(conv->bias));
 
     conv->in_channel = in_channel;
     conv->out_channel = out_channel;
@@ -200,8 +201,8 @@ void initConv(ConvolutionLayer *conv, int in_channel, int out_channel, int kerne
 
 void initFc(FullyConnetLayer *fc, int in_channel, int out_channel)   
 {        
-    readFloatBinary("./params/weight_fc.bin", &(fc->weight));
-    readFloatBinary("./params/bias_fc.bin", &(fc->bias));
+    readFloatBinary("../cnn_python/params/weight_fc.bin", &(fc->weight));
+    readFloatBinary("../cnn_python/params/bias_fc.bin", &(fc->bias));
 
     fc->in_channel = in_channel;
     fc->out_channel = out_channel;
@@ -245,38 +246,206 @@ void center_crop(Image *input, Image *output, int crop_size)
 
 void pad(Image *input, Image *output, int padding)
 {    
-    return;    
+    output->width = input->width + 2 * padding;
+    output->height = input->height + 2 * padding;
+    output->channel = input->channel;
+    
+    int output_size = output->width * output->height * output->channel;
+    output->data = (float *)malloc(output_size * sizeof(float));
+    if (output->data == NULL) {
+        printf("Memory allocation failed for padding.\n");
+        return;
+    }
+    
+    // 初始化为0
+    for (int i = 0; i < output_size; i++) {
+        output->data[i] = 0.0f;
+    }
+    
+    // 复制原始图像到中心区域
+    for (int c = 0; c < input->channel; c++) {
+        for (int i = 0; i < input->height; i++) {
+            for (int j = 0; j < input->width; j++) {
+                int in_idx = c * input->width * input->height + i * input->width + j;
+                int out_idx = c * output->width * output->height + 
+                             (i + padding) * output->width + (j + padding);
+                output->data[out_idx] = input->data[in_idx];
+            }
+        }
+    }    
 }
  
 void image2vector(Image *input, Vector *output)
 {
-    return; 
+    output->channel = input->channel * input->width * input->height;
+    output->data = (float *)malloc(output->channel * sizeof(float));
+    if (output->data == NULL) {
+        printf("Memory allocation failed for vector.\n");
+        return;
+    }
+    
+    // 按通道优先顺序展平
+    for (int i = 0; i < output->channel; i++) {
+        output->data[i] = input->data[i];
+    }
 }
 
 void convolve(Image *input, Image *output, const ConvolutionLayer conv)
 {      
-    return;
+    // 应用padding
+    Image *padded = (Image *)malloc(sizeof(Image));
+    pad(input, padded, conv.padding);
+    
+    output->channel = conv.out_channel;
+    output->height = (padded->height - conv.kernel_size) / conv.stride + 1;
+    output->width = (padded->width - conv.kernel_size) / conv.stride + 1;
+    
+    int output_size = output->channel * output->height * output->width;
+    output->data = (float *)malloc(output_size * sizeof(float));
+    if (output->data == NULL) {
+        printf("Memory allocation failed for convolution output.\n");
+        free(padded->data);
+        free(padded);
+        return;
+    }
+    
+    // 执行卷积
+    for (int oc = 0; oc < conv.out_channel; oc++) {
+        for (int oh = 0; oh < output->height; oh++) {
+            for (int ow = 0; ow < output->width; ow++) {
+                int h_start = oh * conv.stride;
+                int w_start = ow * conv.stride;
+                float sum = 0.0f;
+                
+                for (int ic = 0; ic < conv.in_channel; ic++) {
+                    for (int kh = 0; kh < conv.kernel_size; kh++) {
+                        for (int kw = 0; kw < conv.kernel_size; kw++) {
+                            int h_idx = h_start + kh;
+                            int w_idx_img = w_start + kw;  // 重命名这个变量
+                            
+                            // 输入索引
+                            int in_idx = ic * padded->width * padded->height + 
+                                         h_idx * padded->width + w_idx_img;
+                                        
+                            // 权重索引 - 使用不同的变量名
+                            int w_idx_weights = oc * conv.in_channel * conv.kernel_size * conv.kernel_size +
+                                               ic * conv.kernel_size * conv.kernel_size +
+                                               kh * conv.kernel_size + kw;
+                            
+                            sum += padded->data[in_idx] * conv.weight[w_idx_weights];
+                        }
+                    }
+                }
+                
+                // 添加偏置
+                int out_idx = oc * output->height * output->width + 
+                              oh * output->width + ow;
+                output->data[out_idx] = sum + conv.bias[oc];
+            }
+        }
+    }
+    
+    free(padded->data);
+    free(padded);
 }
 
 
 void max_pooling(Image *input, Image *output, const MaxPooling pool)
 {
-    return;
+    output->channel = input->channel;
+    output->height = (input->height - pool.kernel_size) / pool.stride + 1;
+    output->width = (input->width - pool.kernel_size) / pool.stride + 1;
+    
+    int output_size = output->channel * output->height * output->width;
+    output->data = (float *)malloc(output_size * sizeof(float));
+    if (output->data == NULL) {
+        printf("Memory allocation failed for pooling output.\n");
+        return;
+    }
+    
+    // 执行最大池化
+    for (int c = 0; c < input->channel; c++) {
+        for (int oh = 0; oh < output->height; oh++) {
+            for (int ow = 0; ow < output->width; ow++) {
+                int h_start = oh * pool.stride;
+                int w_start = ow * pool.stride;
+                float max_val = -FLT_MAX;
+                
+                for (int kh = 0; kh < pool.kernel_size; kh++) {
+                    for (int kw = 0; kw < pool.kernel_size; kw++) {
+                        int h_idx = h_start + kh;
+                        int w_idx = w_start + kw;
+                        
+                        if (h_idx < input->height && w_idx < input->width) {
+                            int in_idx = c * input->width * input->height + 
+                                         h_idx * input->width + w_idx;
+                            if (input->data[in_idx] > max_val) {
+                                max_val = input->data[in_idx];
+                            }
+                        }
+                    }
+                }
+                
+                int out_idx = c * output->height * output->width + 
+                              oh * output->width + ow;
+                output->data[out_idx] = max_val;
+            }
+        }
+    }
 }
 
 void reluImage(Image *input, Image *output)
 {  
-    return;
+    output->channel = input->channel;
+    output->width = input->width;
+    output->height = input->height;
+    
+    int size = input->channel * input->width * input->height;
+    output->data = (float *)malloc(size * sizeof(float));
+    if (output->data == NULL) {
+        printf("Memory allocation failed for ReLU output.\n");
+        return;
+    }
+    
+    for (int i = 0; i < size; i++) {
+        output->data[i] = input->data[i] > 0 ? input->data[i] : 0.0f;
+    }
 }
 
 void reluVector(Vector *input, Vector *output)
 {   
-    return;
+    output->channel = input->channel;
+    output->data = (float *)malloc(output->channel * sizeof(float));
+    if (output->data == NULL) {
+        printf("Memory allocation failed for vector ReLU.\n");
+        return;
+    }
+    
+    for (int i = 0; i < input->channel; i++) {
+        output->data[i] = input->data[i] > 0 ? input->data[i] : 0.0f;
+    }
 }
 
 void fullyconnect(Vector *input, Vector *output, const FullyConnetLayer fc)
 {
-    return;
+    output->channel = fc.out_channel;
+    output->data = (float *)malloc(output->channel * sizeof(float));
+    if (output->data == NULL) {
+        printf("Memory allocation failed for FC output.\n");
+        return;
+    }
+    
+    // 初始化为偏置
+    for (int i = 0; i < output->channel; i++) {
+        output->data[i] = fc.bias[i];
+    }
+    
+    // 矩阵乘法
+    for (int i = 0; i < output->channel; i++) {
+        for (int j = 0; j < fc.in_channel; j++) {
+            output->data[i] += input->data[j] * fc.weight[i * fc.in_channel + j];
+        }
+    }
 }
 
 void freeImage(Image* img) {
@@ -327,31 +496,31 @@ int main()
     readBMP("./image.bmp", &(bmp_image->data), &(bmp_image->channel), &(bmp_image->width), &(bmp_image->height));   
     savetxt(bmp_image->data, 40, 40, 3, "./output/image.txt");    
 	
-//    ConvolutionLayer conv;
-//    FullyConnetLayer fc;
-//    MaxPooling pool;
-//	
-//    initConv(&conv, 3, 8, 3, 1, 1);
-//    initFc(&fc, 200, 7); 
-//    initPool(&pool, 8, 8);    
-//	
-//    Image *conv_output = (Image*)malloc(sizeof(Image));
-//    Image *pooling_output = (Image*)malloc(sizeof(Image));
-//    Image *relu_output = (Image*)malloc(sizeof(Image));
-//    convolve(bmp_image, conv_output, conv);
-//    max_pooling(conv_output, pooling_output, pool);
-//    reluImage(pooling_output, relu_output);   
-//
-//    Vector *fc_input  = (Vector*)malloc(sizeof(Vector));
-//    Vector *fc_output = (Vector*)malloc(sizeof(Vector));  
-//    image2vector(relu_output, fc_input);   
-//    fullyconnect(fc_input, fc_output, fc);   
-//	
-//    savetxt(relu_output->data, relu_output->width, relu_output->height, relu_output->channel, "./output/output_conv.txt");
-//    savetxt(fc_output->data, fc_output->channel, 1, 1, "./output/output_fc.txt");
-//
-//    freeResources(bmp_image, conv_output, pooling_output, relu_output,
-//                  fc_input, fc_output);
+   ConvolutionLayer conv;
+   FullyConnetLayer fc;
+   MaxPooling pool;
+	
+   initConv(&conv, 3, 8, 3, 1, 1);
+   initFc(&fc, 200, 7); 
+   initPool(&pool, 8, 8);    
+	
+   Image *conv_output = (Image*)malloc(sizeof(Image));
+   Image *pooling_output = (Image*)malloc(sizeof(Image));
+   Image *relu_output = (Image*)malloc(sizeof(Image));
+   convolve(bmp_image, conv_output, conv);
+   max_pooling(conv_output, pooling_output, pool);
+   reluImage(pooling_output, relu_output);   
+
+   Vector *fc_input  = (Vector*)malloc(sizeof(Vector));
+   Vector *fc_output = (Vector*)malloc(sizeof(Vector));  
+   image2vector(relu_output, fc_input);   
+   fullyconnect(fc_input, fc_output, fc);   
+	
+   savetxt(relu_output->data, relu_output->width, relu_output->height, relu_output->channel, "./output/output_conv.txt");
+   savetxt(fc_output->data, fc_output->channel, 1, 1, "./output/output_fc.txt");
+
+   freeResources(bmp_image, conv_output, pooling_output, relu_output,
+                 fc_input, fc_output);
     return 0;
 }
 
