@@ -6,6 +6,19 @@ import torchvision.transforms as transforms
 from PIL import Image
 import struct
 
+# 定义网络结构参数
+conv_shapes = [
+    (32, 3, 3, 3),   # conv1
+    (32, 32, 3, 3),   # conv2
+    (64, 32, 3, 3),   # conv3
+    (128, 64, 3, 3)   # conv4
+]
+fc_shapes = [
+    (256, 128 * 5 * 5),   # fc1
+    (128, 256),       # fc2
+    (7, 128)          # fc3
+]
+
 
 def read_bin_as_floats(filename):
     floats = []
@@ -19,36 +32,100 @@ def read_bin_as_floats(filename):
         for i in range(0, len(data), float_size):
             float_value = struct.unpack('f', data[i:i + float_size])[0]
             floats.append(float_value)
-    return floats
+    return np.array(floats)
 
 
-img = Image.open('./data/image.bmp')
+# 读取参数文件
+weight_conv_all = read_bin_as_floats('./params/weight_conv.bin')
+bias_conv_all = read_bin_as_floats('./params/bias_conv.bin')
+weight_fc_all = read_bin_as_floats('./params/weight_fc.bin')
+bias_fc_all = read_bin_as_floats('./params/bias_fc.bin')
+
+# 按层分割参数
+conv_weights = []
+conv_biases = []
+start_idx = 0
+for shape in conv_shapes:
+    size = np.prod(shape)
+    w = weight_conv_all[start_idx:start_idx+size].reshape(shape)
+    conv_weights.append(w)
+    start_idx += size
+
+start_idx = 0
+for shape in conv_shapes:
+    size = shape[0]
+    b = bias_conv_all[start_idx:start_idx+size]
+    conv_biases.append(b)
+    start_idx += size
+
+fc_weights = []
+fc_biases = []
+start_idx = 0
+for shape in fc_shapes:
+    size = np.prod(shape)
+    w = weight_fc_all[start_idx:start_idx+size].reshape(shape)
+    fc_weights.append(w)
+    start_idx += size
+
+start_idx = 0
+for shape in fc_shapes:
+    size = shape[0]
+    b = bias_fc_all[start_idx:start_idx+size]
+    fc_biases.append(b)
+    start_idx += size
+
+# 初始化PyTorch模型
+conv1 = nn.Conv2d(3, 32, 3, padding=1)
+conv2 = nn.Conv2d(32, 32, 3, padding=1)
+conv3 = nn.Conv2d(32, 64, 3, padding=1)
+conv4 = nn.Conv2d(64, 128, 3, padding=1)
+pooling = nn.MaxPool2d(2, stride=2)
+relu = nn.ReLU()
+fc1 = nn.Linear(128 * 5 * 5, 256)
+fc2 = nn.Linear(256, 128)
+fc3 = nn.Linear(128, 7)
+
+# 加载参数
+conv1.weight.data = torch.tensor(conv_weights[0], dtype=torch.float32)
+conv1.bias.data = torch.tensor(conv_biases[0], dtype=torch.float32)
+conv2.weight.data = torch.tensor(conv_weights[1], dtype=torch.float32)
+conv2.bias.data = torch.tensor(conv_biases[1], dtype=torch.float32)
+conv3.weight.data = torch.tensor(conv_weights[2], dtype=torch.float32)
+conv3.bias.data = torch.tensor(conv_biases[2], dtype=torch.float32)
+conv4.weight.data = torch.tensor(conv_weights[3], dtype=torch.float32)
+conv4.bias.data = torch.tensor(conv_biases[3], dtype=torch.float32)
+
+fc1.weight.data = torch.tensor(fc_weights[0], dtype=torch.float32)
+fc1.bias.data = torch.tensor(fc_biases[0], dtype=torch.float32)
+fc2.weight.data = torch.tensor(fc_weights[1], dtype=torch.float32)
+fc2.bias.data = torch.tensor(fc_biases[1], dtype=torch.float32)
+fc3.weight.data = torch.tensor(fc_weights[2], dtype=torch.float32)
+fc3.bias.data = torch.tensor(fc_biases[2], dtype=torch.float32)
+
+# 图像预处理
 normalize = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 transform = transforms.Compose([
     transforms.ToTensor(),
     normalize
 ])
+
+# 读取图像
+img = Image.open('./data/image.bmp')
 img_tensor = transform(img).unsqueeze(0)
 
-weight_conv = np.array(read_bin_as_floats(
-    './params/weight_conv.bin')).reshape(8, 3, 3, 3)
-bias_conv = np.array(read_bin_as_floats('./params/bias_conv.bin'))
-weight_fc = np.array(read_bin_as_floats(
-    './params/weight_fc.bin')).reshape(7, 200)
-bias_fc = np.array(read_bin_as_floats('./params/bias_fc.bin'))
-
-conv = nn.Conv2d(3, 8, 3, 1, 1)
-fc = nn.Linear(200, 7)
-pooling = nn.MaxPool2d(8, stride=8)
-relu = nn.ReLU()
-
-conv.weight.data = torch.tensor(weight_conv, dtype=torch.float32)
-conv.bias.data = torch.tensor(bias_conv,   dtype=torch.float32)
-fc.weight.data = torch.tensor(weight_fc,   dtype=torch.float32)
-fc.bias.data = torch.tensor(bias_fc,     dtype=torch.float32)
-
-feature_conv = relu(pooling(conv(img_tensor)))
-feature_fc = fc(feature_conv.view(1, -1))
+# PyTorch前向传播
+x = relu(conv1(img_tensor))
+x = relu(conv2(x))
+x = pooling(x)
+x = relu(conv3(x))
+x = pooling(x)
+x = relu(conv4(x))
+feature_conv = pooling(x)
+feature_conv = relu(feature_conv)
+feature_conv = feature_conv.view(1, -1)
+x = relu(fc1(feature_conv))
+x = relu(fc2(x))
+feature_fc = fc3(x)
 
 # c
 c_img = np.loadtxt("../cnn_c/output/image.txt")
@@ -58,20 +135,13 @@ p_img = img_tensor.squeeze().numpy()
 image_error = np.mean((abs(p_img - c_img)))
 print('Error C Image:  {:.10f}'.format(image_error))
 
-temp_img = 255 * (0.5 * c_img + 0.5)
-temp_img = Image.fromarray(temp_img.transpose(1, 2, 0).astype(np.uint8))
-temp_img.save('temp_img.jpg')
-
 c_conv = np.loadtxt("../cnn_c/output/output_conv.txt")
-channel, rows, cols = feature_conv.squeeze().shape
-c_conv = c_conv.reshape(channel, rows, cols)
+c_conv = c_conv.reshape(128, 5, 5)
 conv_c_mean_error = np.mean(
-    abs(feature_conv.squeeze().detach().numpy() - c_conv))
+    abs(feature_conv.squeeze().detach().numpy().reshape(128, 5, 5) - c_conv))
 print('Error C Conv: {:.10f}'.format(conv_c_mean_error))
 
 c_fc = np.loadtxt("../cnn_c/output/output_fc.txt")
-channel, rows = feature_fc.shape
-c_fc = c_fc.reshape(channel, rows)
 fc_c_mean_error = np.mean(abs(feature_fc.squeeze().detach().numpy() - c_fc))
 print('Error Fc: {:.10f}'.format(fc_c_mean_error))
 
